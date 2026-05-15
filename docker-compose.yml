@@ -1,0 +1,82 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: price-tracker-postgres
+    environment:
+      POSTGRES_DB: price_tracker
+      POSTGRES_USER: tracker
+      POSTGRES_PASSWORD: tracker
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracker -d price_tracker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: price-tracker-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build: .
+    container_name: price-tracker-migrate
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  user-bot:
+    build: .
+    container_name: price-tracker-user-bot
+    command: ["python", "-m", "app.run_user_bot"]
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  admin-bot:
+    build: .
+    container_name: price-tracker-admin-bot
+    command: ["python", "-m", "app.run_admin_bot"]
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build: .
+    container_name: price-tracker-scheduler
+    command: ["python", "-m", "app.run_scheduler"]
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
