@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -18,6 +19,14 @@ class AffiliateConversionResult:
     affiliate_url: str | None
     message: str | None
     payload: dict | None
+
+
+def _is_valid_http_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value.strip())
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    except Exception:
+        return False
 
 
 class AffiliateService:
@@ -44,63 +53,41 @@ class AffiliateService:
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                 async with session.post(self.settings.earnkaro_base_url, json=body) as response:
                     text = await response.text()
-                    payload: dict | None = None
+                    payload: dict | None
 
                     try:
                         payload = await response.json(content_type=None)
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         payload = {"raw": text}
 
                     if response.status == 401:
-                        return AffiliateConversionResult(
-                            status=AffiliateStatus.UNAUTHORIZED,
-                            affiliate_url=None,
-                            message="Please authenticate",
-                            payload=payload,
-                        )
+                        return AffiliateConversionResult(AffiliateStatus.UNAUTHORIZED, None, "Please authenticate", payload)
 
                     if response.status == 429 or "Too many requests" in text:
-                        return AffiliateConversionResult(
-                            status=AffiliateStatus.RATE_LIMITED,
-                            affiliate_url=None,
-                            message="Too many requests from this API key",
-                            payload=payload,
-                        )
+                        return AffiliateConversionResult(AffiliateStatus.RATE_LIMITED, None, "Too many requests from this API key", payload)
 
                     if payload and payload.get("success") == 1 and payload.get("data"):
+                        candidate = str(payload["data"]).strip()
+                        if _is_valid_http_url(candidate):
+                            return AffiliateConversionResult(AffiliateStatus.SUCCESS, candidate, None, payload)
                         return AffiliateConversionResult(
-                            status=AffiliateStatus.SUCCESS,
-                            affiliate_url=str(payload["data"]),
-                            message=None,
-                            payload=payload,
+                            AffiliateStatus.UNSUPPORTED,
+                            None,
+                            candidate,  # e.g. "We could not locate an affiliate URL..."
+                            payload,
                         )
 
                     if payload and payload.get("error") == 1:
                         message = str(payload.get("message", "Affiliate conversion failed"))
                         status = AffiliateStatus.UNSUPPORTED if "unsupported" in message.lower() else AffiliateStatus.FAILED
-                        return AffiliateConversionResult(
-                            status=status,
-                            affiliate_url=None,
-                            message=message,
-                            payload=payload,
-                        )
+                        return AffiliateConversionResult(status, None, message, payload)
 
-                    return AffiliateConversionResult(
-                        status=AffiliateStatus.FAILED,
-                        affiliate_url=None,
-                        message="Unexpected EarnKaro response",
-                        payload=payload,
-                    )
+                    return AffiliateConversionResult(AffiliateStatus.FAILED, None, "Unexpected EarnKaro response", payload)
 
         try:
             result = await with_retry(_request, retries=self.settings.max_retries, exception_types=(aiohttp.ClientError, TimeoutError))
             logger.info("affiliate_conversion_complete", status=result.status.value, url=product_url)
             return result
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("affiliate_conversion_exception", error=str(exc), url=product_url)
-            return AffiliateConversionResult(
-                status=AffiliateStatus.FAILED,
-                affiliate_url=None,
-                message=str(exc),
-                payload=None,
-            )
+            return AffiliateConversionResult(AffiliateStatus.FAILED, None, str(exc), None)
