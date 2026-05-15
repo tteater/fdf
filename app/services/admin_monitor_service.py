@@ -33,11 +33,11 @@ class AdminMonitorService:
 
         normalized = level.lower()
         if normalized == "error":
-            logger.error(message, event=event, payload=payload)
+            logger.error("admin_log_event", event_name=event, detail=message, payload=payload)
         elif normalized == "warning":
-            logger.warning(message, event=event, payload=payload)
+            logger.warning("admin_log_event", event_name=event, detail=message, payload=payload)
         else:
-            logger.info(message, event=event, payload=payload)
+            logger.info("admin_log_event", event_name=event, detail=message, payload=payload)
 
         if notify_admin:
             await self.send_admin_message(level=level, event=event, message=message, payload=payload)
@@ -61,4 +61,4 @@ class AdminMonitorService:
         try:
             await self.bot.send_message(self.settings.admin_chat_id, text)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("admin_message_send_failed", error=str(exc), event=event)
+            logger.exception("admin_message_send_failed", error=str(exc), event_name=event)
